@@ -28,6 +28,13 @@ class PyrightServer(SolidLanguageServer):
         """
         Creates a PyrightServer instance. This class is not meant to be instantiated directly.
         Use LanguageServer.create() instead.
+
+        Supported ``ls_specific_settings`` (under the ``python`` key):
+
+        * ``pyright_version``: the pyright version to install/use (default: ``PYRIGHT_VERSION``).
+        * ``analysis_timeout``: maximum time in seconds to wait for Pyright's initial workspace
+          analysis to complete before proceeding (default: ``30.0``). Increase this for very large
+          workspaces where Pyright needs longer to scan all source files.
         """
         super().__init__(
             config,
@@ -229,12 +236,18 @@ class PyrightServer(SolidLanguageServer):
         # Complete the initialization handshake
         self.server.notify.initialized({})
 
-        # Wait for Pyright to complete its initial workspace analysis
-        # This prevents zombie processes by ensuring background tasks finish
-        log.info("Waiting for Pyright to complete initial workspace analysis...")
-        if self.analysis_complete.wait(timeout=5.0):
+        # Wait for Pyright to complete its initial workspace analysis.
+        # This prevents zombie processes by ensuring background tasks finish.
+        # The previous fixed 5s wait was too short for large workspaces: Pyright can take much longer
+        # to scan thousands of files, so Serena would treat the server as ready and issue queries
+        # before analysis finished, yielding empty/incomplete results. We now wait up to
+        # analysis_timeout (default 30s, configurable via ls_specific_settings.python.analysis_timeout)
+        # and proceed regardless once it elapses.
+        analysis_timeout = float(self._custom_settings.get("analysis_timeout", 30.0))
+        log.info("Waiting up to %.0fs for Pyright to complete initial workspace analysis...", analysis_timeout)
+        if self.analysis_complete.wait(timeout=analysis_timeout):
             log.info("Pyright initial analysis complete, server ready")
         else:
-            log.warning("Timeout waiting for Pyright analysis completion, proceeding anyway")
+            log.warning("Timeout waiting for Pyright analysis completion after %.0fs, proceeding anyway", analysis_timeout)
             # Fallback: assume analysis is complete after timeout
             self.analysis_complete.set()

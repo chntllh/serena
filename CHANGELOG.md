@@ -48,6 +48,10 @@ Status of the `main` branch. Changes prior to the next official version change w
   - Make tool call errors surface explicitly as errors at the MCP protocol level
 
 * Language Servers:
+  - Python (`pyright`): increase the initial workspace-analysis wait from a fixed 5s to a
+    configurable timeout (`ls_specific_settings.python.analysis_timeout`, default 30s). The old 5s
+    was too short for large workspaces, so Serena treated the server as ready and issued queries
+    before analysis finished, returning empty/incomplete results.
   - C/C++ (clangd): improve support and documentation for Unreal Engine 5 projects.
   - HLSL (`shader-language-server`): pass `--locked` to `cargo install` when building from source
     on macOS (and in the manual-install instructions), honoring the crate's packaged `Cargo.lock`.

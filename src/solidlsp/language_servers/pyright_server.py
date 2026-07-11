@@ -16,6 +16,9 @@ from solidlsp.settings import SolidLSPSettings
 log = logging.getLogger(__name__)
 
 PYRIGHT_VERSION = "1.1.403"
+DEFAULT_ANALYSIS_TIMEOUT = 30.0
+"""Default maximum time (seconds) to wait for Pyright's initial workspace analysis before proceeding.
+Overridable via ``ls_specific_settings.python.analysis_timeout``."""
 
 
 class PyrightServer(SolidLanguageServer):
@@ -47,6 +50,15 @@ class PyrightServer(SolidLanguageServer):
         # Event to signal when initial workspace analysis is complete
         self.analysis_complete = threading.Event()
         self.found_source_files = False
+
+    @staticmethod
+    def _resolve_analysis_timeout(custom_settings: SolidLSPSettings.CustomLSSettings) -> float:
+        """Resolve the initial-analysis wait timeout (seconds) from LS-specific settings.
+
+        Reads the ``analysis_timeout`` key, falling back to :data:`DEFAULT_ANALYSIS_TIMEOUT`.
+        Kept as a small pure function so the policy can be unit-tested without starting Pyright.
+        """
+        return float(custom_settings.get("analysis_timeout", DEFAULT_ANALYSIS_TIMEOUT))
 
     def _create_dependency_provider(self) -> LanguageServerDependencyProvider:
         return LanguageServerDependencyProviderUvx(
@@ -243,7 +255,7 @@ class PyrightServer(SolidLanguageServer):
         # before analysis finished, yielding empty/incomplete results. We now wait up to
         # analysis_timeout (default 30s, configurable via ls_specific_settings.python.analysis_timeout)
         # and proceed regardless once it elapses.
-        analysis_timeout = float(self._custom_settings.get("analysis_timeout", 30.0))
+        analysis_timeout = self._resolve_analysis_timeout(self._custom_settings)
         log.info("Waiting up to %.0fs for Pyright to complete initial workspace analysis...", analysis_timeout)
         if self.analysis_complete.wait(timeout=analysis_timeout):
             log.info("Pyright initial analysis complete, server ready")

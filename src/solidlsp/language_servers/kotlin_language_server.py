@@ -19,7 +19,9 @@ Example configuration for large projects:
 import logging
 import os
 import pathlib
+import shutil
 import stat
+import tempfile
 import threading
 
 from overrides import override
@@ -104,6 +106,11 @@ class KotlinLanguageServer(SolidLanguageServer):
         self._indexing_complete.set()
         self._active_progress_tokens: set[str] = set()
         self._progress_lock = threading.Lock()
+
+        # Create a session-specific storage directory to avoid "Multiple editing
+        # sessions for one workspace" errors caused by stale MVS databases from
+        # previous sessions that were not cleanly shut down.
+        self._kotlin_storage_path = tempfile.mkdtemp(prefix="serena-kotlin-lsp-")
 
     def _create_dependency_provider(self) -> LanguageServerDependencyProvider:
         return self.DependencyProvider(self._custom_settings, self._ls_resources_dir)
@@ -399,7 +406,7 @@ class KotlinLanguageServer(SolidLanguageServer):
             },
             "initializationOptions": {
                 "workspaceFolders": [root_uri],
-                "storagePath": None,
+                "storagePath": self._kotlin_storage_path,
                 "codegen": {"enabled": False},
                 "compiler": {"jvm": {"target": "default"}},
                 "completion": {"snippets": {"enabled": True}},
@@ -521,3 +528,12 @@ class KotlinLanguageServer(SolidLanguageServer):
     def _get_wait_time_for_cross_file_referencing(self) -> float:
         """Small safety buffer since we already waited for indexing to complete in _start_server."""
         return 1.0
+
+    @override
+    def stop(self, shutdown_timeout: float = 2.0) -> None:
+        super().stop(shutdown_timeout)
+        try:
+            if hasattr(self, "_kotlin_storage_path") and os.path.isdir(self._kotlin_storage_path):
+                shutil.rmtree(self._kotlin_storage_path, ignore_errors=True)
+        except Exception:
+            pass

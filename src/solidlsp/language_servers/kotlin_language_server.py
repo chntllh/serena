@@ -114,6 +114,10 @@ class KotlinLanguageServer(SolidLanguageServer):
         # previous sessions that were not cleanly shut down.
         self._kotlin_storage_path = tempfile.mkdtemp(prefix="serena-kotlin-lsp-")
 
+        # Heartbeat to prevent the pre-alpha KLS JVM from idling out (~20 min)
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat_thread: threading.Thread | None = None
+
     def _create_dependency_provider(self) -> LanguageServerDependencyProvider:
         return self.DependencyProvider(self._custom_settings, self._ls_resources_dir)
 
@@ -457,6 +461,27 @@ class KotlinLanguageServer(SolidLanguageServer):
         except Exception:
             log.debug("Failed to kill stale Kotlin LSP processes", exc_info=True)
 
+    def _start_heartbeat(self) -> None:
+        """Start a background thread that pings the Kotlin LSP every 4 minutes.
+
+        The pre-alpha JetBrains KLS JVM (v261+) terminates after ~20 min of
+        idle time. We send $/cancelRequest with a dummy id — a standard LSP
+        notification that the server ignores harmlessly but which keeps the
+        stdio pipe and JVM event loop alive.
+        """
+        def heartbeat_loop() -> None:
+            while not self._heartbeat_stop.wait(timeout=240.0):
+                try:
+                    if self.server.is_running():
+                        self.server.send_notification("$/cancelRequest", {"id": 0})
+                except Exception:
+                    pass
+
+        self._heartbeat_thread = threading.Thread(
+            target=heartbeat_loop, name="KotlinLSPHeartbeat", daemon=True
+        )
+        self._heartbeat_thread.start()
+
     def _start_server(self) -> None:
         """
         Starts the Kotlin Language Server
@@ -552,6 +577,8 @@ class KotlinLanguageServer(SolidLanguageServer):
         else:
             log.warning("Kotlin LSP did not signal indexing completion within %.0fs; proceeding anyway", _INDEXING_TIMEOUT)
 
+        self._start_heartbeat()
+
     @override
     def _get_wait_time_for_cross_file_referencing(self) -> float:
         """Small safety buffer since we already waited for indexing to complete in _start_server."""
@@ -559,6 +586,7 @@ class KotlinLanguageServer(SolidLanguageServer):
 
     @override
     def stop(self, shutdown_timeout: float = 2.0) -> None:
+        self._heartbeat_stop.set()
         super().stop(shutdown_timeout)
         try:
             if hasattr(self, "_kotlin_storage_path") and os.path.isdir(self._kotlin_storage_path):

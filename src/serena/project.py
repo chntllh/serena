@@ -458,7 +458,11 @@ class Project(ToStringMixin):
             ls_specific_settings = dict(self.serena_config.ls_specific_settings)
             if self.project_config.ls_specific_settings:
                 if self.is_trusted():
-                    ls_specific_settings.update(self.project_config.ls_specific_settings)
+                    for lang, settings in self.project_config.ls_specific_settings.items():
+                        if isinstance(settings, dict) and lang in ls_specific_settings:
+                            ls_specific_settings[lang] = {**ls_specific_settings[lang], **settings}
+                        else:
+                            ls_specific_settings[lang] = settings
                 else:
                     log.warning(
                         f"Project path {self.project_root} is not trusted, ignoring LS-specific settings from project configuration. "

@@ -20,7 +20,9 @@ import logging
 import os
 import pathlib
 import shutil
+import signal
 import stat
+import subprocess
 import tempfile
 import threading
 
@@ -430,6 +432,31 @@ class KotlinLanguageServer(SolidLanguageServer):
         }
         return initialize_params
 
+    @staticmethod
+    def _kill_stale_kotlin_lsp_processes() -> None:
+        """Kill orphaned Kotlin LSP JVM processes from previous sessions.
+
+        The IntelliJ-based Kotlin LSP (v261+) refuses to start if another
+        LSP process is already registered for the same workspace. When the
+        previous Serena session or MCP server is killed without a clean
+        shutdown, the JVM process survives as an orphan and blocks new
+        sessions with 'Multiple editing sessions for one workspace are not
+        supported yet'.
+        """
+        try:
+            result = subprocess.run(
+                ["pkill", "-f", "KotlinLspServerKt"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                log.info("Killed stale Kotlin LSP process(es)")
+        except FileNotFoundError:
+            log.debug("pkill not available; skipping stale-process cleanup")
+        except Exception:
+            log.debug("Failed to kill stale Kotlin LSP processes", exc_info=True)
+
     def _start_server(self) -> None:
         """
         Starts the Kotlin Language Server
@@ -493,6 +520,7 @@ class KotlinLanguageServer(SolidLanguageServer):
         self.server.on_notification("language/actionableNotification", do_nothing)
 
         log.info("Starting Kotlin server process")
+        self._kill_stale_kotlin_lsp_processes()
         self.server.start()
         initialize_params = self._create_initialize_params()
 

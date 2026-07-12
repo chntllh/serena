@@ -134,18 +134,23 @@ class LanguageServerManager:
             elif thread.language_server is not None:
                 language_servers[thread.language] = thread.language_server
 
-        # If any server failed to start up, raise an exception and stop all started language servers.
-        # We intentionally fail fast here. The user's intention is to work with all the specified languages,
-        # so if any of them is not available, it is better to make symbolic tool calls fail, bringing the issue to the
-        # user's attention instead of silently continuing with a subset of the language servers and potentially
-        # causing suboptimal agent behaviour.
+        # Allow partial success: if at least one language server started successfully,
+        # return a manager with the successful ones and log the failures as warnings.
+        # Only raise if ALL language servers failed.
+        if language_servers:
+            if exceptions:
+                failure_messages = "\n".join([f"{lang.value}: {e}" for lang, e in exceptions.items()])
+                log.warning(
+                    f"{len(exceptions)} language server(s) failed to start, continuing with "
+                    f"{len(language_servers)} successful server(s):\n{failure_messages}"
+                )
+            return LanguageServerManager(language_servers, factory)
+
         if exceptions:
             for ls in language_servers.values():
                 ls.stop()
             failure_messages = "\n".join([f"{lang.value}: {e}" for lang, e in exceptions.items()])
-            raise LanguageServerManagerInitialisationError(f"Failed to start {len(exceptions)} language server(s):\n{failure_messages}")
-
-        return LanguageServerManager(language_servers, factory)
+            raise LanguageServerManagerInitialisationError(f"All {len(exceptions)} language server(s) failed to start:\n{failure_messages}")
 
     def _ensure_functional_ls(self, ls: SolidLanguageServer) -> SolidLanguageServer:
         if not ls.is_running():
